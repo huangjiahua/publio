@@ -28,9 +28,9 @@ impl Channel {
 
     async fn broadcast(&mut self, content: Arc<Vec<u8>>) -> io::Result<()> {
         for s in self.senders.iter_mut() {
-            s.send(content.clone()).await.map_err(|_| {
-                io::Error::new(io::ErrorKind::BrokenPipe, "channel send error")
-            })?;
+            if let Err(_) = s.send(content.clone()).await {
+                continue;
+            }
         }
         Ok(())
     }
