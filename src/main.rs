@@ -3,11 +3,15 @@ extern crate log;
 extern crate env_logger;
 
 use std::io;
+use std::io::ErrorKind;
+use std::error::Error;
 use std::sync::Arc;
 use tokio::prelude::*;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Sender, Receiver, channel};
 use tokio::sync::Mutex;
+use tokio::io::BufReader;
+use publio::protocol::{AsyncCommandParser, Action};
 
 struct Channel {
     senders: Vec<Sender<Arc<Vec<u8>>>>,
@@ -56,28 +60,40 @@ async fn publish(socket: &mut TcpStream, chan: Arc<Mutex<Channel>>) -> io::Resul
     Ok(())
 }
 
-async fn serve_client(mut socket: TcpStream, channels: Arc<Vec<Arc<Mutex<Channel>>>>) {
-    let mut buf = [0u8; 1024];
-    while let Ok(n) = socket.read(&mut buf).await {
-        if n < 2 {
-            break;
-        }
-        let (rw, num) = buf[0..n].split_at(1);
-        assert_eq!(rw.len(), 1);
-
-        let chan_num = (num[0] - b'0') as usize;
-
-        match rw[0] {
-            b'r' => {
-                info!("get subscriber");
-                let r = channels[chan_num].lock().await.register();
-                subscribe(&mut socket, r).await.unwrap();
+async fn serve_client(socket: TcpStream, channels: Arc<Vec<Arc<Mutex<Channel>>>>) {
+    let mut socket = Some(socket);
+    loop {
+        let mut buf_reader = BufReader::new(socket.take().unwrap());
+        let cmd;
+        let mut parser = AsyncCommandParser(&mut buf_reader);
+        cmd = match parser.parse_command().await {
+            Ok(c) => c,
+            Err(e) => {
+                match e.kind() {
+                    ErrorKind::Other => {
+                        continue;
+                    }
+                    _ => {
+                        debug!("parse command error: {}", e.description());
+                        break;
+                    }
+                }
             }
-            b'w' => {
-                info!("get publisher");
-                publish(&mut socket, channels[chan_num].clone()).await.unwrap();
+        };
+        let mut stream = buf_reader.into_inner();
+        match cmd.action() {
+            Action::Read => {
+                let r = channels[cmd.channel()].lock().await.register();
+                if let Err(e) = subscribe(&mut stream, r).await {
+                    debug!("subscribe error: {}", e.description());
+                }
             }
-            _ => {}
+            Action::Write => {
+                if let Err(e) = publish(&mut stream,
+                                        channels[cmd.channel()].clone()).await {
+                    debug!("publish error: {}", e.description());
+                }
+            }
         }
         break;
     }
