@@ -9,8 +9,9 @@ use crate::util::*;
 
 #[derive(Clone, Copy)]
 pub enum Action {
-    Read,
-    Write,
+    SubStream,
+    PubStream,
+    PubPacket(usize),
 }
 
 pub struct Command {
@@ -81,10 +82,10 @@ impl<'a> AsyncCommandParser<'a> {
         let ch = self.read_u8().await?;
         match ch {
             b'w' | b'W' => {
-                builder.set_act(Action::Write);
+                builder.set_act(Action::PubStream);
             }
             b'r' | b'R' => {
-                builder.set_act(Action::Read);
+                builder.set_act(Action::SubStream);
             }
             _ => {
                 return Err(io::Error::new(ErrorKind::Other, "protocol error"));
