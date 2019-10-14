@@ -1,6 +1,7 @@
 use std::io;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Sender, Receiver, channel};
+use std::collections::HashMap;
 
 pub struct Message {
     pub data: Vec<u8>,
@@ -46,30 +47,56 @@ impl Message {
     }
 }
 
+struct Launcher {
+    sender: Sender<Arc<Message>>,
+}
+
 pub struct Channel {
-    senders: Vec<Sender<Arc<Message>>>,
+    senders: HashMap<u64, Launcher>,
+    msg_id: u64,
+    cli_id: u64,
 }
 
 impl Channel {
     pub fn new() -> Self {
         Channel {
-            senders: vec![],
+            senders: HashMap::new(),
+            msg_id: 0,
+            cli_id: 0,
         }
     }
 
     pub fn register(&mut self) -> Receiver<Arc<Message>> {
         let (sender, recevier) = channel(1000);
-        self.senders.push(sender);
+        let launcher = Launcher {
+            sender,
+        };
+        let cli_id = self.cli_id;
+        self.cli_id += 1;
+        let r = self.senders.insert(cli_id, launcher).is_none();
+        assert!(r);
         recevier
     }
 
-    pub async fn broadcast(&mut self, content: Arc<Message>) -> io::Result<()> {
-        for s in self.senders.iter_mut() {
-            if let Err(_) = s.send(content.clone()).await {
+    // protected by mutex
+    pub async fn broadcast(&mut self, content: Arc<Message>) -> io::Result<u64> {
+        let ret = self.msg_id;
+        self.msg_id += 1;
+        let mut freed = vec![];
+
+        for (id, l) in self.senders.iter_mut() {
+            if let Err(_) = l.sender.send(content.clone()).await {
+                freed.push(*id);
                 continue;
             }
         }
-        Ok(())
+
+        for id in freed {
+            debug!("subscriber closed");
+            self.senders.remove(&id).unwrap();
+        }
+
+        Ok(ret)
     }
 }
 
