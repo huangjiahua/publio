@@ -35,6 +35,11 @@ async fn publish(socket: &mut TcpStream, chan: Arc<Mutex<Channel>>) -> io::Resul
     Ok(())
 }
 
+async fn publish_packet(packet: &Arc<Message>, chan: Arc<Mutex<Channel>>) -> io::Result<()> {
+    chan.lock().await.broadcast(packet.clone()).await?;
+    Ok(())
+}
+
 async fn serve_client(socket: TcpStream, channels: Arc<Vec<Arc<Mutex<Channel>>>>) {
     let mut socket = Some(socket);
     loop {
@@ -62,18 +67,23 @@ async fn serve_client(socket: TcpStream, channels: Arc<Vec<Arc<Mutex<Channel>>>>
                 if let Err(e) = subscribe(&mut stream, r).await {
                     debug!("subscribe error: {}", e.description());
                 }
+                break;
             }
             Action::PubStream => {
                 if let Err(e) = publish(&mut stream,
                                         channels[cmd.channel()].clone()).await {
                     debug!("publish error: {}", e.description());
                 }
+                break;
             }
-            Action::PubPacket(_) => {
-                unimplemented!("packet publish")
+            Action::PubPacket(p) => {
+                if let Err(e) = publish_packet(p,
+                                               channels[cmd.channel()].clone()).await {
+                    debug!("publish packet error: {}", e.description());
+                }
             }
         }
-        break;
+        socket = Some(stream);
     }
 }
 

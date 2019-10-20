@@ -1,17 +1,19 @@
 #![allow(unused)]
 
+use std::sync::Arc;
 use std::io::ErrorKind;
 use std::io;
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use crate::util::*;
+use crate::channel::Message;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum Action {
     SubStream,
     PubStream,
-    PubPacket(usize),
+    PubPacket(Arc<Message>),
 }
 
 pub struct Command {
@@ -20,8 +22,8 @@ pub struct Command {
 }
 
 impl Command {
-    pub fn action(&self) -> Action {
-        self.act
+    pub fn action(&self) -> &Action {
+        &self.act
     }
 
     pub fn channel(&self) -> usize {
@@ -87,14 +89,31 @@ impl<'a> AsyncCommandParser<'a> {
             b'r' | b'R' => {
                 builder.set_act(Action::SubStream);
             }
+            b'p' | b'P' => {
+                return self.parse_packet_pub().await;
+            }
             _ => {
                 return Err(io::Error::new(ErrorKind::Other, "protocol error"));
             }
         }
 
-        let size = self.read_usize_end_line().await?;
-        builder.set_channel(size);
+        let channel_no = self.read_usize_end_line().await?;
+        builder.set_channel(channel_no);
 
+        Ok(builder.try_build().unwrap())
+    }
+
+    async fn parse_packet_pub(&mut self) -> io::Result<Command> {
+        let mut builder = CommandBuilder::new();
+        let channel_no = self.read_usize_end_line().await?;
+
+        builder.set_channel(channel_no);
+        let msg_len = self.read_usize_end_line().await?;
+        let mut buf: Vec<u8> = vec![0; msg_len];
+
+        self.0.read_exact(&mut buf[..msg_len]).await?;
+        let msg = Message::from_vec(buf);
+        builder.set_act(Action::PubPacket(Arc::new(msg)));
         Ok(builder.try_build().unwrap())
     }
 

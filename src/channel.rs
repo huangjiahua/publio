@@ -5,40 +5,18 @@ use std::collections::HashMap;
 
 pub struct Message {
     pub data: Vec<u8>,
-    packet_len: usize,
-    packet_off: usize,
 }
 
 impl Message {
     pub fn from_bytes(bytes: &[u8]) -> Message {
         Message {
             data: bytes.to_vec(),
-            packet_len: 0,
-            packet_off: 0,
         }
     }
 
-    pub fn from_bytes_and_packet_info(bytes: &[u8], len: usize, off: usize) -> Message {
+    pub fn from_vec(vec: Vec<u8>) -> Message {
         Message {
-            data: bytes.to_vec(),
-            packet_len: len,
-            packet_off: off,
-        }
-    }
-
-    pub fn packet_len(&self) -> Option<usize> {
-        if self.packet_len == 0 {
-            None
-        } else {
-            Some(self.packet_len)
-        }
-    }
-
-    pub fn packet_off(&self) -> Option<usize> {
-        if self.packet_len == 0 {
-            None
-        } else {
-            Some(self.packet_off)
+            data: vec,
         }
     }
 
