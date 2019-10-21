@@ -15,14 +15,26 @@ use tokio::io::BufReader;
 use publio::protocol::{AsyncCommandParser, Action};
 use publio::channel::*;
 
-async fn subscribe(socket: &mut TcpStream, mut r: Receiver<Arc<Message>>) -> io::Result<()> {
+async fn subscribe(mut socket: TcpStream, mut r: Receiver<Arc<Message>>) -> io::Result<()> {
     while let Some(msg) = r.recv().await {
         socket.write_all(&msg.data[..]).await?;
     }
     Ok(())
 }
 
-async fn publish(socket: &mut TcpStream, chan: Arc<Mutex<Channel>>) -> io::Result<()> {
+async fn subscribe_packet(
+    mut socket: TcpStream,
+    mut r: Receiver<Arc<Message>>,
+) -> io::Result<()> {
+    while let Some(msg) = r.recv().await {
+        let len_str = format!(":{}\r\n", msg.data.len());
+        socket.write_all(len_str.as_bytes()).await?;
+        socket.write_all(&msg.data[..]).await?;
+    }
+    Ok(())
+}
+
+async fn publish(mut socket: TcpStream, chan: Arc<Mutex<Channel>>) -> io::Result<()> {
     let mut buf = [0u8; 1024];
     loop {
         let n = socket.read(&mut buf).await?;
@@ -51,6 +63,7 @@ async fn serve_client(socket: TcpStream, channels: Arc<Vec<Arc<Mutex<Channel>>>>
             Err(e) => {
                 match e.kind() {
                     ErrorKind::Other => {
+                        socket = Some(buf_reader.into_inner());
                         continue;
                     }
                     _ => {
@@ -60,17 +73,24 @@ async fn serve_client(socket: TcpStream, channels: Arc<Vec<Arc<Mutex<Channel>>>>
                 }
             }
         };
-        let mut stream = buf_reader.into_inner();
+        let stream = buf_reader.into_inner();
         match cmd.action() {
             Action::SubStream => {
                 let r = channels[cmd.channel()].lock().await.register();
-                if let Err(e) = subscribe(&mut stream, r).await {
+                if let Err(e) = subscribe(stream, r).await {
                     debug!("subscribe error: {}", e.description());
                 }
                 break;
             }
+            Action::SubPacket => {
+                let r = channels[cmd.channel()].lock().await.register();
+                if let Err(e) = subscribe_packet(stream, r).await {
+                    debug!("subscribe packet error: {}", e.description());
+                }
+                break;
+            }
             Action::PubStream => {
-                if let Err(e) = publish(&mut stream,
+                if let Err(e) = publish(stream,
                                         channels[cmd.channel()].clone()).await {
                     debug!("publish error: {}", e.description());
                 }

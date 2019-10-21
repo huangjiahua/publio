@@ -12,6 +12,7 @@ use crate::channel::Message;
 #[derive(Clone)]
 pub enum Action {
     SubStream,
+    SubPacket,
     PubStream,
     PubPacket(Arc<Message>),
 }
@@ -92,6 +93,9 @@ impl<'a> AsyncCommandParser<'a> {
             b'p' | b'P' => {
                 return self.parse_packet_pub().await;
             }
+            b's' | b'S' => {
+                builder.set_act(Action::SubPacket);
+            }
             _ => {
                 return Err(io::Error::new(ErrorKind::Other, "protocol error"));
             }
@@ -127,7 +131,7 @@ impl<'a> AsyncCommandParser<'a> {
         let mut buf: Vec<u8> = Vec::with_capacity(3);
 
         self.0.read_until(b'\n', &mut buf).await?;
-        if buf.len() < 2 {
+        if buf.len() <= 2 {
             return Err(io::Error::new(ErrorKind::Other, "protocol error"));
         }
 
